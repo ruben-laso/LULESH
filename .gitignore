@@ -1,2 +1,6 @@
 *.o
 **/lulesh2.0
+
+# Usual paths
+**/.vscode
+**/.idea
