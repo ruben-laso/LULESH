@@ -2647,49 +2647,85 @@ ApplyMaterialPropertiesForElems(Domain& domain)
     Index_t numElem = domain.numElem();
 
     if (numElem != 0) {
+        sycl::queue q;
+
         /* Expose all of the variables needed for material evaluation */
         Real_t eosvmin = domain.eosvmin();
         Real_t eosvmax = domain.eosvmax();
         Real_t* vnewc = Allocate<Real_t>(numElem);
 
-        std::copy(
-            std::execution::par, domain.vnew_begin(), domain.vnew_end(), vnewc);
+        {
+            sycl::buffer<Real_t, 1> vnewc_buf(vnewc, numElem);
 
-        // Bound the updated relative volumes with eosvmin/max
-        if (eosvmin != Real_t(0.)) {
-            std::transform(
-                std::execution::par,
-                vnewc,
-                vnewc + numElem,
-                vnewc,
-                [=](Real_t vc) { return vc < eosvmin ? eosvmin : vc; });
-        }
+            auto vnew_buf = sycl::buffer<Real_t, 1>(domain.vnew_begin(), numElem);
+            q.submit(
+                [&](sycl::handler& h) {
+                    auto vnew_acc = vnew_buf.get_access<sycl::access::mode::read>(h);
+                    auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::write>(h);
 
-        if (eosvmax != Real_t(0.)) {
-            std::transform(
-                std::execution::par,
-                vnewc,
-                vnewc + numElem,
-                vnewc,
-                [=](Real_t vc) { return vc > eosvmax ? eosvmax : vc; });
-        }
+                    h.parallel_for(sycl::range<1>(numElem), [=](sycl::item<1> item) {
+                        const auto i = item.get_id(0);
+                        vnewc_acc[i] = vnew_acc[i];
+                    });
+                });
+            q.wait();
 
-        // This check may not make perfect sense in LULESH, but
-        // it's representative of something in the full code -
-        // just leave it in, please
-        if (std::any_of(std::execution::par,
-                domain.v_begin(),
-                domain.v_end(),
-                [=](Real_t vc) {
-                    if (eosvmin != Real_t(0.0) && vc < eosvmin) {
-                        vc = eosvmin;
-                    }
-                    if (eosvmax != Real_t(0.0) && vc > eosvmax) {
-                        vc = eosvmax;
-                    }
-                    return vc < 0.0;
-                })) {
-            exit(VolumeError);
+            // Bound the updated relative volumes with eosvmin/max
+            if (eosvmin != Real_t(0.)) {
+                q.submit(
+                    [&](sycl::handler& h) {
+                        auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::write>(h);
+                        const auto kernel = [=](sycl::item<1> item) {
+                            const auto i = item.get_id(0);
+                            vnewc_acc[i] = std::max(vnewc_acc[i], eosvmin);
+                        };
+
+                        h.parallel_for(sycl::range<1>(numElem), kernel);
+                    });
+                q.wait();
+            }
+
+            if (eosvmax != Real_t(0.)) {
+                q.submit(
+                    [&](sycl::handler& h) {
+                        auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::write>(h);
+                        const auto kernel = [=](sycl::item<1> item) {
+                            const auto i = item.get_id(0);
+                            vnewc_acc[i] = std::min(vnewc_acc[i], eosvmax);
+                        };
+
+                        h.parallel_for(sycl::range<1>(numElem), kernel);
+                    });
+                q.wait();
+            }
+
+            // This check may not make perfect sense in LULESH, but
+            // it's representative of something in the full code -
+            // just leave it in, please
+            int isVolumeError = 0;
+
+            sycl::buffer<int, 1> isVolumeError_buf(&isVolumeError, 1);
+
+            q.submit([&](sycl::handler& h) {
+                 auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::write>(h);
+
+                 auto isVolumeError_red = sycl::reduction(isVolumeError_buf, h, sycl::maximum<int>());
+
+                 const auto kernel = [=](sycl::item<1> item, auto& isVolumeError_red) {
+                     const auto i = item.get_id(0);
+                     if (vnewc_acc[i] <= Real_t(0.0)) {
+                         isVolumeError_red.combine(1);
+                     }
+                 };
+
+                 h.parallel_for(sycl::range<1>(numElem), isVolumeError_red, kernel);
+             }).wait();
+
+            if (isVolumeError != 0) {
+                exit(VolumeError);
+            }
+
+            // Release the buffer vnewc_buf -> implicit copy back to vnewc
         }
 
         for (Int_t r = 0; r < domain.numReg(); r++) {
