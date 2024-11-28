@@ -2756,26 +2756,44 @@ CalcCourantConstraintForElems(Domain& domain,
     Real_t& dtcourant)
 {
     Real_t qqc2 = Real_t(64.0) * qqc * qqc;
-    dtcourant = std::transform_reduce(
-        std::execution::par,
-        counting_iterator(0),
-        counting_iterator(length),
-        dtcourant,
-        [](Real_t a, Real_t b) { return a < b ? a : b; },
-        [=, &domain](Index_t i) {
-            Index_t indx = regElemlist[i];
-            if (domain.vdov(indx) == Real_t(0.0)) {
-                return std::numeric_limits<Real_t>::max();
+
+    sycl::queue q;
+
+    sycl::buffer<Real_t, 1> dtcourant_buf(&dtcourant, 1);
+
+    sycl::buffer<Index_t, 1> regElemlist_buf(regElemlist, length);
+    sycl::buffer<Real_t, 1> vdov_buf(domain.vdov_begin(), domain.numElem());
+    sycl::buffer<Real_t, 1> ss_buf(domain.ss_begin(), domain.numElem());
+    sycl::buffer<Real_t, 1> arealg_buf(domain.arealg_begin(), domain.numElem());
+
+    q.submit([&](sycl::handler& h) {
+        auto dtcourant_red = sycl::reduction(dtcourant_buf, h, sycl::minimum<Real_t>());
+
+        auto regElemlist_acc = regElemlist_buf.get_access<sycl::access::mode::read>(h);
+        auto vdov_acc = vdov_buf.get_access<sycl::access::mode::read>(h);
+        auto ss_acc = ss_buf.get_access<sycl::access::mode::read>(h);
+        auto arealg_acc = arealg_buf.get_access<sycl::access::mode::read>(h);
+
+        const auto kernel = [=](sycl::item<1> item, auto& dtcourant_red) {
+            const auto i = item.get_id(0);
+            const auto indx = regElemlist_acc[i];
+            if (vdov_acc[indx] == Real_t(0.0)) {
+                dtcourant_red.combine(std::numeric_limits<Real_t>::max());
             } else {
-                Real_t dtf = domain.ss(indx) * domain.ss(indx);
-                if (domain.vdov(indx) < Real_t(0.0)) {
-                    dtf += qqc2 * domain.arealg(indx) * domain.arealg(indx) * domain.vdov(indx) * domain.vdov(indx);
+                Real_t dtf = ss_acc[indx] * ss_acc[indx];
+                if (vdov_acc[indx] < Real_t(0.0)) {
+                    dtf += qqc2 * arealg_acc[indx] * arealg_acc[indx] * vdov_acc[indx] * vdov_acc[indx];
                 }
                 dtf = std::sqrt(dtf);
-                dtf = domain.arealg(indx) / dtf;
-                return dtf;
+                dtf = arealg_acc[indx] / dtf;
+                dtcourant_red.combine(dtf);
             }
-        });
+        };
+
+        h.parallel_for(sycl::range<1>(length), dtcourant_red, kernel);
+    });
+
+    q.wait();
 }
 
 /******************************************/
@@ -2787,21 +2805,6 @@ CalcHydroConstraintForElems(Domain& domain,
     Real_t dvovmax,
     Real_t& dthydro)
 {
-    // dthydro = std::transform_reduce(
-    //     std::execution::par,
-    //     counting_iterator(0),
-    //     counting_iterator(length),
-    //     dthydro,
-    //     [](Real_t a, Real_t b) { return a < b ? a : b; },
-    //     [=, &domain](Index_t i) {
-    //         Index_t indx = regElemlist[i];
-    //         if (domain.vdov(indx) == Real_t(0.0)) {
-    //             return std::numeric_limits<Real_t>::max();
-    //         } else {
-    //             return dvovmax / (std::abs(domain.vdov(indx)) + Real_t(1.e-20));
-    //         }
-    //     });
-
     sycl::queue q;
 
     sycl::buffer<Real_t, 1> dthydro_buf(&dthydro, 1);
