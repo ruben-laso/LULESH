@@ -2719,16 +2719,24 @@ ApplyMaterialPropertiesForElems(Domain& domain)
 static inline void
 UpdateVolumesForElems(Domain& domain, Real_t v_cut, Index_t length)
 {
-    std::transform(std::execution::par,
-        domain.vnew_begin(),
-        domain.vnew_end(),
-        domain.v_begin(),
-        [v_cut](Real_t vnew) {
-            if (std::abs(vnew - Real_t(1.0)) < v_cut) {
-                vnew = Real_t(1.0);
-            }
-            return vnew;
-        });
+    sycl::queue q;
+
+    sycl::buffer<Real_t, 1> v_buf(domain.v_begin(), domain.numElem());
+    sycl::buffer<Real_t, 1> vnew_buf(domain.vnew_begin(), domain.numElem());
+
+    const auto handler = [&](sycl::handler& h) {
+        auto v_acc = v_buf.get_access<sycl::access::mode::write>(h);
+        auto vnew_acc = vnew_buf.get_access<sycl::access::mode::read>(h);
+
+        const auto kernel = [=](sycl::item<1> item) {
+            const auto i = item.get_id(0);
+            v_acc[i] = (std::abs(vnew_acc[i] - Real_t(1.0)) < v_cut) ? Real_t(1.0) : vnew_acc[i];
+        };
+
+        h.parallel_for(sycl::range<1>(length), kernel);
+    };
+
+    q.submit(handler).wait();
 }
 
 /******************************************/
@@ -2766,7 +2774,7 @@ CalcCourantConstraintForElems(Domain& domain,
     sycl::buffer<Real_t, 1> ss_buf(domain.ss_begin(), domain.numElem());
     sycl::buffer<Real_t, 1> arealg_buf(domain.arealg_begin(), domain.numElem());
 
-    q.submit([&](sycl::handler& h) {
+    const auto handler = [&](sycl::handler& h) {
         auto dtcourant_red = sycl::reduction(dtcourant_buf, h, sycl::minimum<Real_t>());
 
         auto regElemlist_acc = regElemlist_buf.get_access<sycl::access::mode::read>(h);
@@ -2791,9 +2799,9 @@ CalcCourantConstraintForElems(Domain& domain,
         };
 
         h.parallel_for(sycl::range<1>(length), dtcourant_red, kernel);
-    });
+    };
 
-    q.wait();
+    q.submit(handler).wait();
 }
 
 /******************************************/
@@ -2812,7 +2820,7 @@ CalcHydroConstraintForElems(Domain& domain,
     sycl::buffer<Index_t, 1> regElemlist_buf(regElemlist, length);
     sycl::buffer<Real_t, 1> vdov_buf(domain.vdov_begin(), domain.numElem());
 
-    q.submit([&](sycl::handler& h) {
+    const auto handler = [&](sycl::handler& h) {
         auto dthydro_red = sycl::reduction(dthydro_buf, h, sycl::minimum<Real_t>());
 
         auto regElemlist_acc = regElemlist_buf.get_access<sycl::access::mode::read>(h);
@@ -2830,9 +2838,9 @@ CalcHydroConstraintForElems(Domain& domain,
         };
 
         h.parallel_for(sycl::range<1>(length), dthydro_red, kernel);
-    });
+    };
 
-    q.wait();
+    q.submit(handler).wait();
 }
 
 /******************************************/
