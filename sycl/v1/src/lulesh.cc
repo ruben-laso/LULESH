@@ -2492,6 +2492,8 @@ EvalEOSForElems(Domain& domain,
     Index_t* regElemList,
     Int_t rep)
 {
+    sycl::queue q;
+
     Real_t e_cut = domain.e_cut();
     Real_t p_cut = domain.p_cut();
     Real_t ss4o3 = domain.ss4o3();
@@ -2521,61 +2523,129 @@ EvalEOSForElems(Domain& domain,
     Real_t* bvc = Allocate<Real_t>(numElemReg);
     Real_t* pbvc = Allocate<Real_t>(numElemReg);
 
-    // loop to add load imbalance based on region number
-    for (Int_t j = 0; j < rep; j++) {
-        /* compress data, minimal set */
-        std::for_each_n(std::execution::par,
-            counting_iterator(0),
-            numElemReg,
-            [=, &domain](Index_t i) {
-                Index_t ielem = regElemList[i];
-                e_old[i] = domain.e(ielem);
-                delvc[i] = domain.delv(ielem);
-                p_old[i] = domain.p(ielem);
-                q_old[i] = domain.q(ielem);
-                qq_old[i] = domain.qq(ielem);
-                ql_old[i] = domain.ql(ielem);
-            });
+    {
+        auto e_old_buf = sycl::buffer<Real_t, 1>(e_old, numElemReg);
+        auto delvc_buf = sycl::buffer<Real_t, 1>(delvc, numElemReg);
+        auto p_old_buf = sycl::buffer<Real_t, 1>(p_old, numElemReg);
+        auto q_old_buf = sycl::buffer<Real_t, 1>(q_old, numElemReg);
+        auto compression_buf = sycl::buffer<Real_t, 1>(compression, numElemReg);
+        auto compHalfStep_buf = sycl::buffer<Real_t, 1>(compHalfStep, numElemReg);
+        auto qq_old_buf = sycl::buffer<Real_t, 1>(qq_old, numElemReg);
+        auto ql_old_buf = sycl::buffer<Real_t, 1>(ql_old, numElemReg);
+        auto work_buf = sycl::buffer<Real_t, 1>(work, numElemReg);
+        auto p_new_buf = sycl::buffer<Real_t, 1>(p_new, numElemReg);
+        auto e_new_buf = sycl::buffer<Real_t, 1>(e_new, numElemReg);
+        auto q_new_buf = sycl::buffer<Real_t, 1>(q_new, numElemReg);
+        auto bvc_buf = sycl::buffer<Real_t, 1>(bvc, numElemReg);
+        auto pbvc_buf = sycl::buffer<Real_t, 1>(pbvc, numElemReg);
 
-        std::for_each_n(std::execution::par,
-            counting_iterator(0),
-            numElemReg,
-            [=](Index_t i) {
-                Index_t ielem = regElemList[i];
-                Real_t vchalf;
-                compression[i] = Real_t(1.) / vnewc[ielem] - Real_t(1.);
-                vchalf = vnewc[ielem] - delvc[i] * Real_t(.5);
-                compHalfStep[i] = Real_t(1.) / vchalf - Real_t(1.);
-            });
+        auto vnewc_buf = sycl::buffer<Real_t, 1>(vnewc, domain.numElem());
+        auto regElemList_buf = sycl::buffer<Index_t, 1>(regElemList, numElemReg);
 
-        /* Check for v > eosvmax or v < eosvmin */
-        if (eosvmin != Real_t(0.)) {
-            std::for_each_n(
-                std::execution::par,
-                counting_iterator(0),
-                numElemReg,
-                [=](Index_t i) {
+        auto delv_buf = sycl::buffer<Real_t, 1>(domain.delv_begin(), domain.numElem());
+        auto e_buf = sycl::buffer<Real_t, 1>(domain.e_begin(), domain.numElem());
+        auto p_buf = sycl::buffer<Real_t, 1>(domain.p_begin(), domain.numElem());
+        auto q_buf = sycl::buffer<Real_t, 1>(domain.q_begin(), domain.numElem());
+        auto qq_buf = sycl::buffer<Real_t, 1>(domain.qq_begin(), domain.numElem());
+        auto ql_buf = sycl::buffer<Real_t, 1>(domain.ql_begin(), domain.numElem());
+
+        // loop to add load imbalance based on region number
+        for (Int_t j = 0; j < rep; j++) {
+            q.submit([&](sycl::handler& h) {
+                auto delvc_acc = delvc_buf.get_access<sycl::access::mode::write>(h);
+                auto e_old_acc = e_old_buf.get_access<sycl::access::mode::write>(h);
+                auto p_old_acc = p_old_buf.get_access<sycl::access::mode::write>(h);
+                auto q_old_acc = q_old_buf.get_access<sycl::access::mode::write>(h);
+                auto qq_old_acc = qq_old_buf.get_access<sycl::access::mode::write>(h);
+                auto ql_old_acc = ql_old_buf.get_access<sycl::access::mode::write>(h);
+
+                auto regElemList_acc = regElemList_buf.get_access<sycl::access::mode::read>(h);
+                auto delv_acc = delv_buf.get_access<sycl::access::mode::read>(h);
+                auto e_acc = e_buf.get_access<sycl::access::mode::read>(h);
+                auto p_acc = p_buf.get_access<sycl::access::mode::read>(h);
+                auto q_acc = q_buf.get_access<sycl::access::mode::read>(h);
+                auto qq_acc = qq_buf.get_access<sycl::access::mode::read>(h);
+                auto ql_acc = ql_buf.get_access<sycl::access::mode::read>(h);
+
+                h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                    const auto i = item.get_id(0);
                     Index_t ielem = regElemList[i];
-                    if (vnewc[ielem] <= eosvmin) { /* impossible due to calling func? */
-                        compHalfStep[i] = compression[i];
-                    }
+                    e_old_acc[i] = e_acc[ielem];
+                    delvc_acc[i] = delv_acc[ielem];
+                    p_old_acc[i] = p_acc[ielem];
+                    q_old_acc[i] = q_acc[ielem];
+                    qq_old_acc[i] = qq_acc[ielem];
+                    ql_old_acc[i] = ql_acc[ielem];
                 });
-        }
-        if (eosvmax != Real_t(0.)) {
-            std::for_each_n(
-                std::execution::par,
-                counting_iterator(0),
-                numElemReg,
-                [=](Index_t i) {
-                    Index_t ielem = regElemList[i];
-                    if (vnewc[ielem] >= eosvmax) { /* impossible due to calling func? */
-                        p_old[i] = Real_t(0.);
-                        compression[i] = Real_t(0.);
-                        compHalfStep[i] = Real_t(0.);
-                    }
+            });
+            q.wait();
+
+            q.submit([&](sycl::handler& h) {
+                auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::read>(h);
+                auto regElemList_acc = regElemList_buf.get_access<sycl::access::mode::read>(h);
+                auto compression_acc = compression_buf.get_access<sycl::access::mode::write>(h);
+                auto compHalfStep_acc = compHalfStep_buf.get_access<sycl::access::mode::write>(h);
+                auto delvc_acc = delvc_buf.get_access<sycl::access::mode::read_write>(h);
+
+                h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                    const auto i = item.get_id(0);
+                    Index_t ielem = regElemList_acc[i];
+                    Real_t vchalf;
+                    compression_acc[i] = Real_t(1.) / vnewc_acc[ielem] - Real_t(1.);
+                    vchalf = vnewc_acc[ielem] - delvc_acc[i] * Real_t(.5);
+                    compHalfStep_acc[i] = Real_t(1.) / vchalf - Real_t(1.);
                 });
+            });
+            q.wait();
+
+            /* Check for v > eosvmax or v < eosvmin */
+            if (eosvmin != Real_t(0.)) {
+                q.submit([&](sycl::handler& h) {
+                    auto compHalfStep_acc = compHalfStep_buf.get_access<sycl::access::mode::read_write>(h);
+                    auto compression_acc = compression_buf.get_access<sycl::access::mode::read>(h);
+                    auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::read>(h);
+                    auto regElemList_acc = regElemList_buf.get_access<sycl::access::mode::read>(h);
+
+                    h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                        const auto i = item.get_id(0);
+                        Index_t ielem = regElemList_acc[i];
+                        if (vnewc_acc[ielem] <= eosvmin) {
+                            compHalfStep_acc[i] = compression_acc[i];
+                        }
+                    });
+                });
+                q.wait();
+            }
+            if (eosvmax != Real_t(0.)) {
+                q.submit([&](sycl::handler& h) {
+                    auto compression_acc = compression_buf.get_access<sycl::access::mode::read_write>(h);
+                    auto compHalfStep_acc = compHalfStep_buf.get_access<sycl::access::mode::read_write>(h);
+                    auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::read>(h);
+                    auto regElemList_acc = regElemList_buf.get_access<sycl::access::mode::read>(h);
+
+                    h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                        const auto i = item.get_id(0);
+                        Index_t ielem = regElemList_acc[i];
+                        if (vnewc_acc[ielem] >= eosvmax) {
+                            p_old[i] = Real_t(0.);
+                            compression_acc[i] = Real_t(0.);
+                            compHalfStep_acc[i] = Real_t(0.);
+                        }
+                    });
+                });
+                q.wait();
+            }
+
+            q.submit([&](sycl::handler& h) {
+                auto work_acc = work_buf.get_access<sycl::access::mode::write>(h);
+                h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                    const auto i = item.get_id(0);
+                    work_acc[i] = Real_t(0.0);
+                });
+            });
+            q.wait();
         }
-        std::fill(std::execution::par, work, work + numElemReg, Real_t(0.0));
+
         CalcEnergyForElems(p_new,
             e_new,
             q_new,
@@ -2602,15 +2672,35 @@ EvalEOSForElems(Domain& domain,
             regElemList);
     }
 
-    std::for_each_n(std::execution::par,
-        counting_iterator(0),
-        numElemReg,
-        [=, &domain](Index_t i) {
-            Index_t ielem = regElemList[i];
-            domain.p(ielem) = p_new[i];
-            domain.e(ielem) = e_new[i];
-            domain.q(ielem) = q_new[i];
-        });
+    {
+        auto p_buf = sycl::buffer<Real_t, 1>(domain.p_begin(), domain.numElem());
+        auto e_buf = sycl::buffer<Real_t, 1>(domain.e_begin(), domain.numElem());
+        auto q_buf = sycl::buffer<Real_t, 1>(domain.q_begin(), domain.numElem());
+
+        auto p_new_buf = sycl::buffer<Real_t, 1>(p_new, numElemReg);
+        auto e_new_buf = sycl::buffer<Real_t, 1>(e_new, numElemReg);
+        auto q_new_buf = sycl::buffer<Real_t, 1>(q_new, numElemReg);
+
+        q.submit(
+            [&](sycl::handler& h) {
+                auto p_acc = p_buf.get_access<sycl::access::mode::write>(h);
+                auto e_acc = e_buf.get_access<sycl::access::mode::write>(h);
+                auto q_acc = q_buf.get_access<sycl::access::mode::write>(h);
+
+                auto p_new_acc = p_new_buf.get_access<sycl::access::mode::read>(h);
+                auto e_new_acc = e_new_buf.get_access<sycl::access::mode::read>(h);
+                auto q_new_acc = q_new_buf.get_access<sycl::access::mode::read>(h);
+
+                h.parallel_for(sycl::range<1>(numElemReg), [=](sycl::item<1> item) {
+                    const auto i = item.get_id(0);
+                    Index_t ielem = regElemList[i];
+                    p_acc[ielem] = p_new_acc[i];
+                    e_acc[ielem] = e_new_acc[i];
+                    q_acc[ielem] = q_new_acc[i];
+                });
+            });
+        q.wait();
+    }
 
     CalcSoundSpeedForElems(domain,
         vnewc,

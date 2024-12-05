@@ -755,6 +755,16 @@ public:
         return m_symmZ.data();
     }
     Real_t*
+    delv_begin()
+    {
+        return m_delv.data();
+    }
+    Real_t*
+    delv_end()
+    {
+        return m_delv.data() + m_delv.size();
+    }
+    Real_t*
     p_begin()
     {
         return m_p.data();
@@ -765,6 +775,16 @@ public:
         return m_p.data() + m_p.size();
     }
     Real_t*
+    e_begin()
+    {
+        return m_e.data();
+    }
+    Real_t*
+    e_end()
+    {
+        return m_e.data() + m_e.size();
+    }
+    Real_t*
     q_begin()
     {
         return m_q.data();
@@ -773,6 +793,26 @@ public:
     q_end()
     {
         return m_q.data() + m_q.size();
+    }
+    Real_t*
+    ql_begin()
+    {
+        return m_ql.data();
+    }
+    Real_t*
+    ql_end()
+    {
+        return m_ql.data() + m_ql.size();
+    }
+    Real_t*
+    qq_begin()
+    {
+        return m_qq.data();
+    }
+    Real_t*
+    qq_end()
+    {
+        return m_qq.data() + m_qq.size();
     }
     Real_t*
     v_begin()
