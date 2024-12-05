@@ -2470,17 +2470,40 @@ CalcSoundSpeedForElems(Domain& domain,
     Index_t len,
     Index_t* regElemList)
 {
-    std::for_each_n(
-        std::execution::par, counting_iterator(0), len, [=, &domain](Index_t i) {
-            Index_t ielem = regElemList[i];
-            Real_t ssTmp = (pbvc[i] * enewc[i] + vnewc[ielem] * vnewc[ielem] * bvc[i] * pnewc[i]) / rho0;
+    sycl::queue q;
+
+    auto pbvc_buf = sycl::buffer<Real_t, 1>(pbvc, len);
+    auto enewc_buf = sycl::buffer<Real_t, 1>(enewc, len);
+    auto pnewc_buf = sycl::buffer<Real_t, 1>(pnewc, len);
+    auto bvc_buf = sycl::buffer<Real_t, 1>(bvc, len);
+    auto vnewc_buf = sycl::buffer<Real_t, 1>(vnewc, domain.numElem());
+    auto regElemList_buf = sycl::buffer<Index_t, 1>(regElemList, len);
+
+    auto ss_buf = sycl::buffer<Real_t, 1>(domain.ss_begin(), domain.numElem());
+
+    q.submit([&](sycl::handler& h) {
+        auto pbvc_acc = pbvc_buf.get_access<sycl::access::mode::read>(h);
+        auto enewc_acc = enewc_buf.get_access<sycl::access::mode::read>(h);
+        auto pnewc_acc = pnewc_buf.get_access<sycl::access::mode::read>(h);
+        auto bvc_acc = bvc_buf.get_access<sycl::access::mode::read>(h);
+        auto vnewc_acc = vnewc_buf.get_access<sycl::access::mode::read>(h);
+        auto regElemList_acc = regElemList_buf.get_access<sycl::access::mode::read>(h);
+
+        auto ss_acc = ss_buf.get_access<sycl::access::mode::write>(h);
+
+        h.parallel_for<class CalcSoundSpeedForElems>(sycl::range<1>(len), [=](sycl::item<1> item) {
+            Index_t i = item.get_id(0);
+            Index_t ielem = regElemList_acc[i];
+            Real_t ssTmp = (pbvc_acc[i] * enewc_acc[i] + vnewc_acc[ielem] * vnewc_acc[ielem] * bvc_acc[i] * pnewc_acc[i]) / rho0;
             if (ssTmp <= Real_t(.1111111e-36)) {
                 ssTmp = Real_t(.3333333e-18);
             } else {
                 ssTmp = SQRT(ssTmp);
             }
-            domain.ss(ielem) = ssTmp;
+            ss_acc[ielem] = ssTmp;
         });
+    });
+    q.wait();
 }
 
 /******************************************/
