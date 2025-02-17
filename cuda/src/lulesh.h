@@ -1,8 +1,11 @@
 #include "vector.h"
 
+#ifndef LULESH_SHOW_PROGRESS
 #define LULESH_SHOW_PROGRESS 0
+#endif
+
 #define DOUBLE_PRECISION
-//#define SAMI 
+//#define SAMI
 
 #if USE_MPI
 #include <mpi.h>
@@ -40,7 +43,7 @@ typedef real4  Real_t ;  /* floating point representation */
 class Domain
 {
 
-public: 
+public:
 
   void sortRegions(Vector_h<Int_t>& regReps_h, Vector_h<Index_t>& regSorted_h);
   void CreateRegionIndexSets(Int_t nr, Int_t balance);
@@ -78,7 +81,7 @@ public:
   Vector_d<Real_t> vdov ;         /* volume derivative over volume */
 
   Vector_d<Real_t> arealg ;       /* char length of an element */
-  
+
   Vector_d<Real_t> ss ;           /* "sound speed" */
 
   Vector_d<Real_t> elemMass ;     /* mass */
@@ -159,9 +162,9 @@ public:
   /* Boundary nodesets */
 
   Vector_d<Index_t> symmX ;       /* symmetry plane nodesets */
-  Vector_d<Index_t> symmY ;        
+  Vector_d<Index_t> symmY ;
   Vector_d<Index_t> symmZ ;
-   
+
   Vector_d<Int_t> nodeElemCount ;
   Vector_d<Int_t> nodeElemStart;
   Vector_d<Index_t> nodeElemCornerList ;
@@ -175,7 +178,7 @@ public:
   Real_t dtmax ;                 /* maximum allowable time increment */
   Int_t cycle ;                  /* iteration count for simulation */
 
-  Real_t* dthydro_h;             /* hydro time constraint */ 
+  Real_t* dthydro_h;             /* hydro time constraint */
   Real_t* dtcourant_h;           /* courant time constraint */
   Index_t* bad_q_h;              /* flag to indicate Q error */
   Index_t* bad_vol_h;            /* flag to indicate volume error */
@@ -190,7 +193,7 @@ public:
   Real_t hgcoef ;               /* hourglass control */
   Real_t qstop ;                /* excessive q indicator */
   Real_t monoq_max_slope ;
-  Real_t monoq_limiter_mult ;   
+  Real_t monoq_limiter_mult ;
   Real_t e_cut ;                /* energy tolerance */
   Real_t p_cut ;                /* pressure tolerance */
   Real_t ss4o3 ;
@@ -223,14 +226,14 @@ public:
   Index_t maxEdgeSize ;
 
   Index_t numElem ;
-  Index_t padded_numElem ; 
+  Index_t padded_numElem ;
 
   Index_t numNode;
-  Index_t padded_numNode ; 
+  Index_t padded_numNode ;
 
-  Index_t numSymmX ; 
-  Index_t numSymmY ; 
-  Index_t numSymmZ ; 
+  Index_t numSymmX ;
+  Index_t numSymmY ;
+  Index_t numSymmZ ;
 
   Index_t octantCorner;
 
@@ -242,9 +245,9 @@ public:
    Vector_d<Int_t> regCSR;  // records the begining and end of each region
    Vector_d<Int_t> regReps; // records the rep number per region
    Vector_d<Index_t> regNumList;    // Region number per domain element
-   Vector_d<Index_t> regElemlist;  // region indexset 
+   Vector_d<Index_t> regElemlist;  // region indexset
    Vector_d<Index_t> regSorted; // keeps index of sorted regions
-   
+
    //
    // MPI-Related additional data
    //
@@ -260,17 +263,17 @@ public:
    Index_t m_colMin, m_colMax;
    Index_t m_planeMin, m_planeMax ;
 
-#if USE_MPI   
-   // Communication Work space 
+#if USE_MPI
+   // Communication Work space
    Real_t *commDataSend ;
    Real_t *commDataRecv ;
 
    Real_t *d_commDataSend ;
    Real_t *d_commDataRecv ;
 
-   // Maximum number of block neighbors 
-   MPI_Request recvRequest[26] ; // 6 faces + 12 edges + 8 corners 
-   MPI_Request sendRequest[26] ; // 6 faces + 12 edges + 8 corners 
+   // Maximum number of block neighbors
+   MPI_Request recvRequest[26] ; // 6 faces + 12 edges + 8 corners
+   MPI_Request sendRequest[26] ; // 6 faces + 12 edges + 8 corners
 #endif
 
 };

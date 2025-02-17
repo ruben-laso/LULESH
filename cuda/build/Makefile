@@ -1,9 +1,11 @@
 # Compiler and Flags
 NVCC            = nvcc
-ARCH_FLAGS      = -arch=sm_86
+# ARCH_FLAGS      = -arch=sm_75
+ARCH_FLAGS      =
 
 # Build Flags
 DEBUG_FLAGS     = -lineinfo
+# -DLULESH_SHOW_PROGRESS
 RELEASE_FLAGS   = -O3 -DNDEBUG
 
 # Linking
